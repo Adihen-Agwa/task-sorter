@@ -43,6 +43,7 @@
 <button id="startBtn">התחל שיחה קולית</button>
 <button id="stopBtn" disabled>עצור</button>
 
+<div id="stats" style="margin-top:8px; font-size:14px;">נשמרו בהצלחה: <span id="successCount">0</span> | נכשלו: <span id="failCount" style="color:#c00;">0</span></div>
 <div id="status">מנותק</div>
 <div id="log"></div>
 
@@ -53,6 +54,13 @@ let audioCtx = null;
 let micStream = null;
 let micNode = null;
 let playbackTime = 0;
+let successCount = 0;
+let failCount = 0;
+
+function updateStatsDisplay() {
+  document.getElementById('successCount').textContent = successCount;
+  document.getElementById('failCount').textContent = failCount;
+}
 
 function log(msg) {
   const el = document.getElementById('log');
@@ -179,19 +187,28 @@ async function handleServerMessage(msg) {
     for (const call of msg.toolCall.functionCalls) {
       if (call.name === 'assign_category') {
         const { task_id, category } = call.args;
-        const result = await sendToSheet(task_id, category);
-        // הצלחה: לא להפריע לשיחה בכלל (SILENT).
-        // כישלון: להזכיר בעדינות בהפסקה טבעית הבאה (WHEN_IDLE), בלי לקטוע את המשתמש.
-        const scheduling = result.status === 'ok' ? 'SILENT' : 'WHEN_IDLE';
+
+        // עונים למודל מיד - לא מחכים כלל לתשובת הגיליון, כדי שלא יעכב את השיחה
         ws.send(JSON.stringify({
           toolResponse: {
             functionResponses: [{
               id: call.id,
               name: call.name,
-              response: { result, scheduling }
+              response: { result: { status: 'ok' }, scheduling: 'SILENT' }
             }]
           }
         }));
+
+        // הכתיבה בפועל רצה ברקע - לא חוסמת את השיחה, אבל עדיין מדווחת אם נכשלה
+        sendToSheet(task_id, category).then((result) => {
+          if (result.status === 'ok') {
+            successCount++;
+          } else {
+            failCount++;
+            log(`⚠️ לא נשמר בגיליון! משימה ${task_id} ← ${category} (${result.status || result.message}). תבדקי ידנית בסוף.`);
+          }
+          updateStatsDisplay();
+        });
       }
     }
     return;
@@ -285,6 +302,9 @@ document.getElementById('startBtn').onclick = async () => {
   if (!apiKey) { alert('צריך למלא API key'); return; }
 
   setStatus('מתחבר...');
+  successCount = 0;
+  failCount = 0;
+  updateStatsDisplay();
   const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
   ws = new WebSocket(url);
 
