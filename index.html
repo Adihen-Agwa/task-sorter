@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>מיון משימות בקול - Gemini Live</title>
+<style>
+  body { font-family: sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; line-height: 1.6; }
+  textarea, input { width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 8px; font-size: 14px; }
+  textarea { height: 120px; }
+  button { padding: 10px 18px; font-size: 15px; cursor: pointer; }
+  #log { background: #f4f4f4; border-radius: 6px; padding: 10px; height: 200px; overflow-y: auto; font-size: 13px; white-space: pre-wrap; }
+  #status { font-weight: bold; margin: 10px 0; }
+  label { font-weight: bold; display: block; margin-top: 14px; }
+</style>
+</head>
+<body>
+
+<h2>מיון משימות בקול - Gemini Live</h2>
+
+<label>Gemini API key (מ-AI Studio)</label>
+<input id="apiKey" type="password" placeholder="AIza...">
+
+<label>URL של ה-Apps Script Web App</label>
+<input id="webhookUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+
+<label>רשימת המשימות (פורמט: מספר. טקסט המשימה - שורה לכל משימה)</label>
+<button id="loadBtn" type="button">טען מהגיליון רק את מה שעוד לא שויך</button>
+<textarea id="taskList" placeholder="1. לתקן את הבורג במנעול
+2. לבדוק את הרדיוס בחלק הפנימי"></textarea>
+
+<label>הקטגוריות (מופרדות בפסיק)</label>
+<input id="categories" type="text" placeholder="דחוף להיום, בקלוג, כללי ורעיונות, תוכנה, חומרה, למחוק">
+
+<label>רגישות תגובה (1 = מגיב הכי מהר, סיכוי לחיתוך | 10 = הכי סבלני, פחות עיכוב מורגש אבל ממתין יותר)</label>
+<input id="sensitivity" type="range" min="1" max="10" value="3" style="width:100%">
+<div style="display:flex; justify-content:space-between; font-size:12px; color:#555; margin-bottom:10px;">
+  <span>מהיר (1)</span>
+  <span id="sensitivityLabel">רמה: 3 (~250ms המתנה)</span>
+  <span>סבלני (10)</span>
+</div>
+<div style="font-size:12px; color:#888; margin-top:-6px; margin-bottom:10px;">* משתנה רק בתחילת שיחה חדשה, לא באמצע שיחה פעילה</div>
+
+<button id="startBtn">התחל שיחה קולית</button>
+<button id="stopBtn" disabled>עצור</button>
+
+<div id="status">מנותק</div>
+<div id="log"></div>
+
+<script>
+const MODEL = "models/gemini-3.1-flash-live-preview";
+let ws = null;
+let audioCtx = null;
+let micStream = null;
+let micNode = null;
+let playbackTime = 0;
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent += msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+
+// --- סליידר רגישות: ממיר 1-10 לזמן המתנה במילישניות ---
+function sensitivityToMs(level) {
+  // 1 -> 100ms (הכי מהיר) ... 10 -> 1000ms (הכי סבלני)
+  return 100 + (level - 1) * 100;
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const slider = document.getElementById('sensitivity');
+  const label = document.getElementById('sensitivityLabel');
+  const saved = localStorage.getItem('taskSorter_sensitivity');
+  if (saved) slider.value = saved;
+  label.textContent = `רמה: ${slider.value} (~${sensitivityToMs(Number(slider.value))}ms המתנה)`;
+
+  slider.addEventListener('input', (e) => {
+    label.textContent = `רמה: ${e.target.value} (~${sensitivityToMs(Number(e.target.value))}ms המתנה)`;
+    localStorage.setItem('taskSorter_sensitivity', e.target.value);
+  });
+});
+
+// --- שמירה וטעינה אוטומטית של API key ו-URL מהדפדפן (localStorage) ---
+window.addEventListener('DOMContentLoaded', () => {
+  const savedKey = localStorage.getItem('taskSorter_apiKey');
+  const savedUrl = localStorage.getItem('taskSorter_webhookUrl');
+  if (savedKey) document.getElementById('apiKey').value = savedKey;
+  if (savedUrl) document.getElementById('webhookUrl').value = savedUrl;
+
+  document.getElementById('apiKey').addEventListener('input', (e) => {
+    localStorage.setItem('taskSorter_apiKey', e.target.value);
+  });
+  document.getElementById('webhookUrl').addEventListener('input', (e) => {
+    localStorage.setItem('taskSorter_webhookUrl', e.target.value);
+  });
+});
+
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
+}
+
+// --- בניית ה-system instruction וה-tool מתוך השדות בעמוד ---
+function buildSetupMessage() {
+  const taskList = document.getElementById('taskList').value.trim();
+  const categories = document.getElementById('categories').value.trim();
+
+  const systemText =
+`את/ה עוזר קולי שממיין משימות לקטגוריות בזמן שהמשתמש נוהג.
+הקטגוריות האפשריות: ${categories}
+
+להלן רשימת המשימות שיש למיין, לפי מספר:
+${taskList}
+
+הוראות עבודה:
+1. עבור על המשימות אחת אחת, לפי הסדר שהן מופיעות.
+2. עבור כל משימה: הקרא בקול את מספרה ואת הטקסט שלה בדיוק כפי שהוא מופיע (בלי לשנות, לקצר או לערוך אף מילה), ואז שאל "לאן לשייך?".
+3. המתן לתשובה הקולית של המשתמש.
+4. ברגע שהמשתמש קובע קטגוריה - קרא מיידית לפונקציה assign_category עם task_id והקטגוריה. אינך צריך להמתין לתוצאת הפונקציה כדי להמשיך - היא נכתבת ברקע. מיד אחרי הקריאה לפונקציה, בלי לעצור או להמתין, אשר בקצרה בקול ("שויך ל-X") ועבור ישר למשימה הבאה.
+5. אם המשתמש לא בטוח לאיזו קטגוריה לשייך, הזכר לו את רשימת הקטגוריות.
+6. כשתסיים את כל המשימות ברשימה, הודע בקול שסיימתם את כולן.`;
+
+  return {
+    setup: {
+      model: MODEL,
+      generationConfig: { responseModalities: ["AUDIO"] },
+      systemInstruction: { parts: [{ text: systemText }] },
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          disabled: false,
+          startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
+          endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+          prefixPaddingMs: 50,
+          silenceDurationMs: sensitivityToMs(Number(document.getElementById('sensitivity').value))
+        }
+      },
+      tools: [{
+        functionDeclarations: [{
+          name: "assign_category",
+          description: "משייך משימה מסוימת (לפי מספרה) לקטגוריה שהמשתמש בחר בקול.",
+          behavior: "NON_BLOCKING",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string", description: "מספר המשימה כפי שמופיע ברשימה" },
+              category: { type: "string", description: "שם הקטגוריה שנבחרה" }
+            },
+            required: ["task_id", "category"]
+          }
+        }]
+      }]
+    }
+  };
+}
+
+// --- שליחת שיוך ל-Apps Script ---
+async function sendToSheet(taskId, category) {
+  const url = document.getElementById('webhookUrl').value.trim();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify({ task_id: taskId, category: category })
+    });
+    const data = await res.json();
+    log(`→ נשלח לגיליון: משימה ${taskId} → ${category} (${data.status})`);
+    return data;
+  } catch (err) {
+    log(`שגיאה בשליחה לגיליון: ${err.message}`);
+    return { status: 'error', message: err.message };
+  }
+}
+
+// --- טיפול בהודעות שמתקבלות מהמודל ---
+async function handleServerMessage(msg) {
+  if (msg.setupComplete) {
+    log('החיבור מוכן, אפשר להתחיל לדבר.');
+    return;
+  }
+
+  if (msg.toolCall) {
+    for (const call of msg.toolCall.functionCalls) {
+      if (call.name === 'assign_category') {
+        const { task_id, category } = call.args;
+        const result = await sendToSheet(task_id, category);
+        // הצלחה: לא להפריע לשיחה בכלל (SILENT).
+        // כישלון: להזכיר בעדינות בהפסקה טבעית הבאה (WHEN_IDLE), בלי לקטוע את המשתמש.
+        const scheduling = result.status === 'ok' ? 'SILENT' : 'WHEN_IDLE';
+        ws.send(JSON.stringify({
+          toolResponse: {
+            functionResponses: [{
+              id: call.id,
+              name: call.name,
+              response: { result, scheduling }
+            }]
+          }
+        }));
+      }
+    }
+    return;
+  }
+
+  if (msg.serverContent && msg.serverContent.modelTurn) {
+    for (const part of msg.serverContent.modelTurn.parts) {
+      if (part.inlineData && part.inlineData.data) {
+        playAudioChunk(part.inlineData.data);
+      }
+    }
+  }
+}
+
+// --- ניגון האודיו שמגיע מהמודל (24kHz PCM) ---
+function playAudioChunk(base64Data) {
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const int16 = new Int16Array(bytes.buffer);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+
+  const buffer = audioCtx.createBuffer(1, float32.length, 24000);
+  buffer.copyToChannel(float32, 0);
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+  if (playbackTime < now) playbackTime = now;
+  source.start(playbackTime);
+  playbackTime += buffer.duration;
+}
+
+// --- לכידת מיקרופון ושליחה כ-PCM 16kHz ---
+async function startMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const source = audioCtx.createMediaStreamSource(micStream);
+  micNode = audioCtx.createScriptProcessor(4096, 1, 1);
+
+  micNode.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const input = e.inputBuffer.getChannelData(0);
+    const int16 = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    const bytes = new Uint8Array(int16.buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+
+    ws.send(JSON.stringify({
+      realtimeInput: { audio: { data: base64, mimeType: "audio/pcm;rate=16000" } }
+    }));
+  };
+
+  source.connect(micNode);
+  micNode.connect(audioCtx.destination);
+}
+
+function stopMic() {
+  if (micNode) micNode.disconnect();
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+}
+
+// --- טעינת משימות שטרם שויכו ישירות מהגיליון ---
+document.getElementById('loadBtn').onclick = async () => {
+  const url = document.getElementById('webhookUrl').value.trim();
+  if (!url) { alert('קודם צריך למלא את ה-URL של Apps Script'); return; }
+  try {
+    const res = await fetch(url + '?action=list');
+    const data = await res.json();
+    if (data.status !== 'ok') { log('שגיאה בטעינה: ' + JSON.stringify(data)); return; }
+
+    const remaining = data.tasks.filter(t => !t.category || t.category.trim() === '');
+    const text = remaining.map(t => `${t.task_id}. ${t.task_text}`).join('\n');
+    document.getElementById('taskList').value = text;
+    log(`נטענו ${remaining.length} משימות שטרם שויכו (מתוך ${data.tasks.length} סה"כ).`);
+  } catch (err) {
+    log('שגיאה בטעינת המשימות: ' + err.message);
+  }
+};
+
+// --- כפתורים ---
+document.getElementById('startBtn').onclick = async () => {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) { alert('צריך למלא API key'); return; }
+
+  setStatus('מתחבר...');
+  const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+  ws = new WebSocket(url);
+
+  ws.onopen = async () => {
+    log('WebSocket נפתח, שולח הודעת setup...');
+    ws.send(JSON.stringify(buildSetupMessage()));
+    await startMic();
+    setStatus('מחובר - מדברים!');
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+  };
+
+  ws.onmessage = async (event) => {
+    let raw = event.data;
+    // הודעות מהשרת יכולות להגיע כ-Blob - צריך להמיר לטקסט קודם
+    if (raw instanceof Blob) raw = await raw.text();
+    let msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch (e) {
+      log('התקבלה הודעה שאינה JSON תקין: ' + raw);
+      return;
+    }
+    log('התקבל מהשרת: ' + JSON.stringify(msg).slice(0, 300));
+    await handleServerMessage(msg);
+  };
+
+  ws.onerror = (err) => log('שגיאת WebSocket (בדקי גם את ה-Console עם F12): ' + JSON.stringify(err));
+  ws.onclose = (event) => {
+    log(`החיבור נסגר. code=${event.code} reason="${event.reason}" wasClean=${event.wasClean}`);
+    setStatus('מנותק');
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+  };
+};
+
+document.getElementById('stopBtn').onclick = () => {
+  stopMic();
+  if (ws) ws.close();
+};
+</script>
+</body>
+</html>
