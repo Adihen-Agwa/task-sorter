@@ -2,48 +2,100 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>מיון משימות בקול - Gemini Live</title>
 <style>
-  body { font-family: sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; line-height: 1.6; }
-  textarea, input { width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 8px; font-size: 14px; }
-  textarea { height: 120px; }
-  button { padding: 10px 18px; font-size: 15px; cursor: pointer; }
-  #log { background: #f4f4f4; border-radius: 6px; padding: 10px; height: 200px; overflow-y: auto; font-size: 13px; white-space: pre-wrap; }
-  #status { font-weight: bold; margin: 10px 0; }
-  label { font-weight: bold; display: block; margin-top: 14px; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Roboto, Arial, sans-serif;
+    max-width: 480px; margin: 0 auto; padding: 12px 14px 40px;
+    line-height: 1.5; font-size: 14px; color: #222;
+  }
+  h2 { font-size: 18px; margin: 8px 0 14px; }
+
+  /* כפתורים ראשיים - גדולים, בולטים, נוחים ללחיצה באצבע */
+  .big-btn {
+    display: block; width: 100%; padding: 18px 10px; margin-bottom: 10px;
+    font-size: 18px; font-weight: bold; border: none; border-radius: 12px;
+    cursor: pointer; color: #fff;
+  }
+  #startBtn { background: #1e8e3e; }
+  #startBtn:disabled { background: #9ccbaa; }
+  #stopBtn { background: #c5221f; }
+  #stopBtn:disabled { background: #e3a6a4; }
+  #refreshBtn { background: #e8710a; }
+  #loadBtn { background: #1a73e8; font-size: 16px; padding: 14px 10px; }
+
+  /* פרטי הגדרות - קטן, לא בולט */
+  .settings-block { font-size: 12px; }
+  .settings-block label { font-weight: bold; display: block; margin-top: 10px; font-size: 12px; }
+  .settings-block input, .settings-block textarea { width: 100%; padding: 6px; font-size: 12px; margin-top: 3px; }
+
+  label.main-label { font-weight: bold; display: block; margin: 14px 0 4px; font-size: 14px; }
+  textarea#taskList { width: 100%; height: 110px; padding: 8px; font-size: 14px; }
+  input#categories { width: 100%; padding: 10px; font-size: 15px; margin-bottom: 6px; }
+
+  details { margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; padding: 6px 10px; }
+  summary { cursor: pointer; font-size: 13px; font-weight: bold; padding: 6px 0; }
+
+  #promptBox { width: 100%; height: 220px; font-size: 12px; font-family: monospace; padding: 8px; }
+  #savePromptBtn { background: #333; color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  #promptSavedMsg { font-size: 12px; color: #1e8e3e; margin-right: 8px; }
+
+  #stats { font-size: 12px; margin-top: 6px; }
+  #status { font-weight: bold; margin: 8px 0; font-size: 13px; }
+  #log { background: #f4f4f4; border-radius: 6px; padding: 8px; height: 130px; overflow-y: auto; font-size: 11px; white-space: pre-wrap; color: #555; }
 </style>
 </head>
 <body>
 
 <h2>מיון משימות בקול - Gemini Live</h2>
 
-<label>Gemini API key (מ-AI Studio)</label>
-<input id="apiKey" type="password" placeholder="AIza...">
+<button id="refreshBtn" class="big-btn" type="button">🔄 רענן כלי + טען מחדש משימות</button>
 
-<label>URL של ה-Apps Script Web App</label>
-<input id="webhookUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+<details>
+<summary>הגדרות (API key, URL, רגישות)</summary>
+<div class="settings-block">
+  <label>Gemini API key (מ-AI Studio)</label>
+  <input id="apiKey" type="password" placeholder="AIza...">
 
-<label>רשימת המשימות (פורמט: מספר. טקסט המשימה - שורה לכל משימה)</label>
-<button id="loadBtn" type="button">טען מהגיליון רק את מה שעוד לא שויך</button>
+  <label>URL של ה-Apps Script Web App</label>
+  <input id="webhookUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+
+  <label>רגישות תגובה (1=מגיב הכי מהר | 10=הכי סבלני)</label>
+  <input id="sensitivity" type="range" min="1" max="10" value="3" style="width:100%">
+  <div style="display:flex; justify-content:space-between; font-size:11px; color:#666;">
+    <span>מהיר (1)</span>
+    <span id="sensitivityLabel">רמה: 3</span>
+    <span>סבלני (10)</span>
+  </div>
+  <div style="font-size:11px; color:#999;">* משתנה רק בתחילת שיחה חדשה</div>
+</div>
+</details>
+
+<label class="main-label">הקטגוריות (מופרדות בפסיק)</label>
+<input id="categories" type="text" placeholder="דחוף להיום, בקלוג, כללי ורעיונות, תוכנה, חומרה, למחוק">
+
+<label class="main-label">רשימת המשימות</label>
+<button id="loadBtn" class="big-btn" type="button">📥 טען מהגיליון רק את מה שעוד לא שויך</button>
 <textarea id="taskList" placeholder="1. לתקן את הבורג במנעול
 2. לבדוק את הרדיוס בחלק הפנימי"></textarea>
 
-<label>הקטגוריות (מופרדות בפסיק)</label>
-<input id="categories" type="text" placeholder="דחוף להיום, בקלוג, כללי ורעיונות, תוכנה, חומרה, למחוק">
-
-<label>רגישות תגובה (1 = מגיב הכי מהר, סיכוי לחיתוך | 10 = הכי סבלני, פחות עיכוב מורגש אבל ממתין יותר)</label>
-<input id="sensitivity" type="range" min="1" max="10" value="3" style="width:100%">
-<div style="display:flex; justify-content:space-between; font-size:12px; color:#555; margin-bottom:10px;">
-  <span>מהיר (1)</span>
-  <span id="sensitivityLabel">רמה: 3 (~250ms המתנה)</span>
-  <span>סבלני (10)</span>
+<details>
+<summary>עריכת ההוראה (פרומפט) שהכלי שולח למודל</summary>
+<div class="settings-block">
+  <p style="font-size:11px; color:#666;">בטקסט חייבים להישאר <code>{CATEGORIES}</code> ו-<code>{TASK_LIST}</code> - הם מוחלפים אוטומטית ברשימות שמילאת למעלה. השינוי נשמר רק בלחיצה על "שמור".</p>
+  <textarea id="promptBox"></textarea>
+  <button id="savePromptBtn" type="button">💾 שמור פרומפט</button>
+  <span id="promptSavedMsg" style="display:none;">נשמר!</span>
+  <button id="resetPromptBtn" type="button" style="margin-right:8px; font-size:12px;">איפוס לברירת מחדל</button>
 </div>
-<div style="font-size:12px; color:#888; margin-top:-6px; margin-bottom:10px;">* משתנה רק בתחילת שיחה חדשה, לא באמצע שיחה פעילה</div>
+</details>
 
-<button id="startBtn">התחל שיחה קולית</button>
-<button id="stopBtn" disabled>עצור</button>
+<button id="startBtn" class="big-btn">🎙️ התחל שיחה קולית</button>
+<button id="stopBtn" class="big-btn" disabled>⏹️ עצור</button>
 
-<div id="stats" style="margin-top:8px; font-size:14px;">נשמרו בהצלחה: <span id="successCount">0</span> | נכשלו: <span id="failCount" style="color:#c00;">0</span></div>
+<div id="stats">נשמרו בהצלחה: <span id="successCount">0</span> | נכשלו: <span id="failCount" style="color:#c00;">0</span></div>
 <div id="status">מנותק</div>
 <div id="log"></div>
 
@@ -57,6 +109,21 @@ let playbackTime = 0;
 let successCount = 0;
 let failCount = 0;
 
+const DEFAULT_PROMPT_TEMPLATE =
+`את/ה עוזר קולי שממיין משימות לקטגוריות בזמן שהמשתמש נוהג.
+הקטגוריות האפשריות: {CATEGORIES}
+
+להלן רשימת המשימות שיש למיין, לפי מספר:
+{TASK_LIST}
+
+הוראות עבודה:
+1. עבור על המשימות אחת אחת, לפי הסדר שהן מופיעות.
+2. עבור כל משימה: הקרא בקול את מספרה ואת הטקסט שלה בדיוק כפי שהוא מופיע (בלי לשנות, לקצר או לערוך אף מילה), ואז שאל "לאן לשייך?".
+3. המתן לתשובה הקולית של המשתמש.
+4. ברגע שהמשתמש קובע קטגוריה - קרא מיידית לפונקציה assign_category עם task_id והקטגוריה. אינך צריך להמתין לתוצאת הפונקציה כדי להמשיך - היא נכתבת ברקע. מיד אחרי הקריאה לפונקציה, בלי לעצור או להמתין, אשר בקצרה בקול ("שויך ל-X") ועבור ישר למשימה הבאה.
+5. אם המשתמש לא בטוח לאיזו קטגוריה לשייך, הזכר לו את רשימת הקטגוריות.
+6. כשתסיים את כל המשימות ברשימה, הודע בקול שסיימתם את כולן.`;
+
 function updateStatsDisplay() {
   document.getElementById('successCount').textContent = successCount;
   document.getElementById('failCount').textContent = failCount;
@@ -68,68 +135,78 @@ function log(msg) {
   el.scrollTop = el.scrollHeight;
 }
 
-// --- סליידר רגישות: ממיר 1-10 לזמן המתנה במילישניות ---
-function sensitivityToMs(level) {
-  // 1 -> 100ms (הכי מהיר) ... 10 -> 1000ms (הכי סבלני)
-  return 100 + (level - 1) * 100;
-}
-
-window.addEventListener('DOMContentLoaded', () => {
-  const slider = document.getElementById('sensitivity');
-  const label = document.getElementById('sensitivityLabel');
-  const saved = localStorage.getItem('taskSorter_sensitivity');
-  if (saved) slider.value = saved;
-  label.textContent = `רמה: ${slider.value} (~${sensitivityToMs(Number(slider.value))}ms המתנה)`;
-
-  slider.addEventListener('input', (e) => {
-    label.textContent = `רמה: ${e.target.value} (~${sensitivityToMs(Number(e.target.value))}ms המתנה)`;
-    localStorage.setItem('taskSorter_sensitivity', e.target.value);
-  });
-});
-
-// --- שמירה וטעינה אוטומטית של API key ו-URL מהדפדפן (localStorage) ---
-window.addEventListener('DOMContentLoaded', () => {
-  const savedKey = localStorage.getItem('taskSorter_apiKey');
-  const savedUrl = localStorage.getItem('taskSorter_webhookUrl');
-  if (savedKey) document.getElementById('apiKey').value = savedKey;
-  if (savedUrl) document.getElementById('webhookUrl').value = savedUrl;
-
-  document.getElementById('apiKey').addEventListener('input', (e) => {
-    localStorage.setItem('taskSorter_apiKey', e.target.value);
-  });
-  document.getElementById('webhookUrl').addEventListener('input', (e) => {
-    localStorage.setItem('taskSorter_webhookUrl', e.target.value);
-  });
-});
-
 function setStatus(text) {
   document.getElementById('status').textContent = text;
 }
+
+// --- סליידר רגישות: ממיר 1-10 לזמן המתנה במילישניות ---
+function sensitivityToMs(level) {
+  return 100 + (level - 1) * 100;
+}
+
+// --- טעינה ושמירה אוטומטית של הגדרות (API key, URL, רגישות, קטגוריות) ---
+function persistedField(id, storageKey) {
+  const el = document.getElementById(id);
+  const saved = localStorage.getItem(storageKey);
+  if (saved !== null) el.value = saved;
+  el.addEventListener('input', (e) => localStorage.setItem(storageKey, e.target.value));
+}
+
+// --- טעינה/שמירה של תבנית הפרומפט (רק בלחיצה מפורשת על שמור) ---
+function loadPromptTemplate() {
+  return localStorage.getItem('taskSorter_promptTemplate') || DEFAULT_PROMPT_TEMPLATE;
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  persistedField('apiKey', 'taskSorter_apiKey');
+  persistedField('webhookUrl', 'taskSorter_webhookUrl');
+  persistedField('categories', 'taskSorter_categories');
+
+  const slider = document.getElementById('sensitivity');
+  const label = document.getElementById('sensitivityLabel');
+  const savedSens = localStorage.getItem('taskSorter_sensitivity');
+  if (savedSens) slider.value = savedSens;
+  label.textContent = `רמה: ${slider.value} (~${sensitivityToMs(Number(slider.value))}ms)`;
+  slider.addEventListener('input', (e) => {
+    label.textContent = `רמה: ${e.target.value} (~${sensitivityToMs(Number(e.target.value))}ms)`;
+    localStorage.setItem('taskSorter_sensitivity', e.target.value);
+  });
+
+  document.getElementById('promptBox').value = loadPromptTemplate();
+
+  document.getElementById('savePromptBtn').onclick = () => {
+    localStorage.setItem('taskSorter_promptTemplate', document.getElementById('promptBox').value);
+    const msg = document.getElementById('promptSavedMsg');
+    msg.style.display = 'inline';
+    setTimeout(() => { msg.style.display = 'none'; }, 2000);
+  };
+
+  document.getElementById('resetPromptBtn').onclick = () => {
+    document.getElementById('promptBox').value = DEFAULT_PROMPT_TEMPLATE;
+    localStorage.removeItem('taskSorter_promptTemplate');
+  };
+
+  document.getElementById('refreshBtn').onclick = () => {
+    location.reload();
+  };
+});
 
 // --- בניית ה-system instruction וה-tool מתוך השדות בעמוד ---
 function buildSetupMessage() {
   const taskList = document.getElementById('taskList').value.trim();
   const categories = document.getElementById('categories').value.trim();
 
-  const systemText =
-`את/ה עוזר קולי שממיין משימות לקטגוריות בזמן שהמשתמש נוהג.
-הקטגוריות האפשריות: ${categories}
-
-להלן רשימת המשימות שיש למיין, לפי מספר:
-${taskList}
-
-הוראות עבודה:
-1. עבור על המשימות אחת אחת, לפי הסדר שהן מופיעות.
-2. עבור כל משימה: הקרא בקול את מספרה ואת הטקסט שלה בדיוק כפי שהוא מופיע (בלי לשנות, לקצר או לערוך אף מילה), ואז שאל "לאן לשייך?".
-3. המתן לתשובה הקולית של המשתמש.
-4. ברגע שהמשתמש קובע קטגוריה - קרא מיידית לפונקציה assign_category עם task_id והקטגוריה. אינך צריך להמתין לתוצאת הפונקציה כדי להמשיך - היא נכתבת ברקע. מיד אחרי הקריאה לפונקציה, בלי לעצור או להמתין, אשר בקצרה בקול ("שויך ל-X") ועבור ישר למשימה הבאה.
-5. אם המשתמש לא בטוח לאיזו קטגוריה לשייך, הזכר לו את רשימת הקטגוריות.
-6. כשתסיים את כל המשימות ברשימה, הודע בקול שסיימתם את כולן.`;
+  const systemText = loadPromptTemplate()
+    .replaceAll('{CATEGORIES}', categories)
+    .replaceAll('{TASK_LIST}', taskList);
 
   return {
     setup: {
       model: MODEL,
-      generationConfig: { responseModalities: ["AUDIO"] },
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        thinkingConfig: { thinkingLevel: "minimal" }
+      },
       systemInstruction: { parts: [{ text: systemText }] },
       realtimeInputConfig: {
         automaticActivityDetection: {
@@ -188,7 +265,6 @@ async function handleServerMessage(msg) {
       if (call.name === 'assign_category') {
         const { task_id, category } = call.args;
 
-        // עונים למודל מיד - לא מחכים כלל לתשובת הגיליון, כדי שלא יעכב את השיחה
         ws.send(JSON.stringify({
           toolResponse: {
             functionResponses: [{
@@ -199,7 +275,6 @@ async function handleServerMessage(msg) {
           }
         }));
 
-        // הכתיבה בפועל רצה ברקע - לא חוסמת את השיחה, אבל עדיין מדווחת אם נכשלה
         sendToSheet(task_id, category).then((result) => {
           if (result.status === 'ok') {
             successCount++;
@@ -281,7 +356,7 @@ function stopMic() {
 // --- טעינת משימות שטרם שויכו ישירות מהגיליון ---
 document.getElementById('loadBtn').onclick = async () => {
   const url = document.getElementById('webhookUrl').value.trim();
-  if (!url) { alert('קודם צריך למלא את ה-URL של Apps Script'); return; }
+  if (!url) { alert('קודם צריך למלא את ה-URL של Apps Script (בהגדרות למעלה)'); return; }
   try {
     const res = await fetch(url + '?action=list');
     const data = await res.json();
@@ -299,7 +374,7 @@ document.getElementById('loadBtn').onclick = async () => {
 // --- כפתורים ---
 document.getElementById('startBtn').onclick = async () => {
   const apiKey = document.getElementById('apiKey').value.trim();
-  if (!apiKey) { alert('צריך למלא API key'); return; }
+  if (!apiKey) { alert('צריך למלא API key (בהגדרות למעלה)'); return; }
 
   setStatus('מתחבר...');
   successCount = 0;
@@ -319,7 +394,6 @@ document.getElementById('startBtn').onclick = async () => {
 
   ws.onmessage = async (event) => {
     let raw = event.data;
-    // הודעות מהשרת יכולות להגיע כ-Blob - צריך להמיר לטקסט קודם
     if (raw instanceof Blob) raw = await raw.text();
     let msg;
     try {
